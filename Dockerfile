@@ -19,7 +19,7 @@ RUN CONDA_DIR="/opt/conda" && \
     \
     $CONDA_DIR/bin/conda update --yes conda && \
     $CONDA_DIR/bin/conda config --set auto_update_conda False && \
-    $CONDA_DIR/bin/conda install --name=base --channel=anjos baker=$VERSION && \
+    $CONDA_DIR/bin/conda install --name=base --channel=anjos lighter=$VERSION && \
     rm -r "$CONDA_DIR/pkgs/" && \
     \
     apk del --purge .build-dependencies && \
