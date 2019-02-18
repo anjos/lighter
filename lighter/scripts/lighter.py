@@ -75,7 +75,7 @@ def main(user_input=None):
 
   completions = dict(
       prog=os.path.basename(sys.argv[0]),
-      version=pkg_resources.require('baker')[0].version,
+      version=pkg_resources.require('lighter')[0].version,
       hostname=socket.gethostname(),
       )
 
