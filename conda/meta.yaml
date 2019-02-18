@@ -34,6 +34,7 @@ test:
     - coverage
 
   commands:
+    - lighter --help
     - nosetests -sv --with-coverage --cover-package={{ name }} {{ name }}
 
 about:
