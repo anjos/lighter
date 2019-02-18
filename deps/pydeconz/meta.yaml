@@ -1,12 +1,12 @@
 {% set version = "52" %}
 
 package:
-  name: deconz
+  name: pydeconz
   version: {{ version }}
 
 source:
   git_url: https://github.com/Kane610/deconz
-  git_rev: {{ version }}
+  git_rev: v{{ version }}
 
 build:
   number: 0
@@ -24,7 +24,7 @@ requirements:
 
 test:
   imports:
-    - deconz
+    - pydeconz
 
 about:
   home: https://github.com/Kane610/deconz

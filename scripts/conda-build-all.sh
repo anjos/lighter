@@ -10,7 +10,7 @@ python_versions=()
 python_versions+=('3.7')
 
 python_pkgs=()
-python_pkgs+=('deps/pyconz')
+python_pkgs+=('deps/pydeconz')
 #python_pkgs+=('conda') #baker itself
 
 for p in "${simple_pkgs[@]}"; do
@@ -20,7 +20,7 @@ done
 
 for pyver in "${python_versions[@]}"; do
   for p in "${python_pkgs[@]}"; do
-    conda build --no-test --python=$pyver $p
-    ${script_dir}/conda-build-docker.sh --no-test --python=$pyver /work/$p
+    conda build --python=$pyver $p
+    ${script_dir}/conda-build-docker.sh --python=$pyver /work/$p
   done
 done

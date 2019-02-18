@@ -28,16 +28,6 @@ for v in "${volumes[@]}"; do
   parameters="$parameters --volume $v";
 done
 
-if [ -e "${HOME}/.b2_auth" ]; then
-  # required for testing on Linux containers
-  export B2_ACCOUNT_ID=$(sed '1q;d' "${HOME}/.b2_auth");
-  parameters="$parameters -e B2_ACCOUNT_ID"
-  echo "[environment] B2_ACCOUNT_ID"
-  export B2_ACCOUNT_KEY=$(sed '2q;d' "${HOME}/.b2_auth");
-  parameters="$parameters -e B2_ACCOUNT_KEY"
-  echo "[environment] B2_ACCOUNT_KEY"
-fi
-
 # If you pass any parameters, we execute the build with the parameters of your
 # choice, else, we assume you want to run interactively
 if [ "$#" = "0" ]; then
