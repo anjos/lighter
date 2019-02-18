@@ -1,0 +1,12 @@
+name: lighter-dev
+channels:
+- https://www.idiap.ch/software/bob/conda
+- anjos
+- defaults
+dependencies:
+- python=3.7
+- docopt
+- pydeconz
+- ipdb
+- bob.buildout
+- mr.developer

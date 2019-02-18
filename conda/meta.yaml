@@ -1,0 +1,43 @@
+{% set name = 'lighter' %}
+{% set version = load_setup_py_data()['version'] %}
+
+package:
+  name: {{ name }}
+  version: {{ version }}
+
+source:
+  path: ../
+
+build:
+  number: 0
+  preserve_egg_dir: True
+  script: python setup.py install --single-version-externally-managed --record=record.txt
+  entry_points:
+    - lighter = lighter.scripts.lighter:main
+
+requirements:
+  build:
+    - python
+    - setuptools
+
+  run:
+    - python
+    - docopt
+    - deconz
+
+test:
+  imports:
+    - {{ name }}
+
+  requires:
+    - nose
+    - coverage
+
+  commands:
+    - nosetests -sv --with-coverage --cover-package={{ name }} {{ name }}
+
+about:
+  home: https://github.com/anjos/lighter
+  license: GPLv3
+  summary: Utilities for managing the ZigBee home stuff
+  license_family: GPL
