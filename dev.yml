@@ -7,6 +7,7 @@ dependencies:
 - python=3.7
 - docopt
 - pydeconz
-- ipdb
-- bob.buildout
-- mr.developer
+- pip:
+  - ipdb
+  - bob.buildout
+  - mr.developer
