@@ -66,10 +66,8 @@ prepare::
 
 Then, you can build dependencies one by one, in order::
 
-  $ vi ./scripts/conda-build-all.sh #comment/uncomment what to compile
   $ conda activate base
-  $ #start the docker daemon, if that is not the case
-  (base) $ ./scripts/conda-build-all.sh
+  $ conda build conda
 
 
 Anaconda Uploads
@@ -80,7 +78,7 @@ everytime), do::
 
   (base) $ anaconda login
   # enter credentials
-  (base) $ anaconda upload <conda-bld>/*-64/{pydeconz,lighter}-*.tar.bz2
+  (base) $ anaconda upload <conda-bld>/noarch/lighter-*.tar.bz2
 
 
 .. Place your references after this line

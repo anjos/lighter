@@ -5,9 +5,13 @@ channels:
 - defaults
 dependencies:
 - python=3.7
-- docopt
-- pydeconz
-- pip:
-  - ipdb
-  - bob.buildout
-  - mr.developer
+- click >=7
+- click-plugins
+- termcolor
+- requests
+- pyyaml >=5.1
+- nose
+- sphinx
+- coverage
+- ipdb
+- bob.buildout

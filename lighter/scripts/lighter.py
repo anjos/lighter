@@ -1,87 +1,67 @@
 #!/usr/bin/env python
-# vim: set fileencoding=utf-8 :
+# -*- coding: utf-8 -*-
 
-"""Controls the setup inside a deconz server
-
-Usage: %(prog)s [-v...] pull [<path>]
-       %(prog)s [-v...] push <path>
-       %(prog)s --help
-       %(prog)s --version
-
-
-Commands:
-
-  pull  Retrieves the configuration from the deCONZ REST-ful server
-  push  Pushes a new configuration to the deCONZ REST-ful server
-
-
-Arguments:
-
-  <path>  A JSON formatted configuration file containing the configuration to
-          push (or the result of the pull operation)
-
-
-Options:
-  -h, --help                   Shows this help message and exits
-  -V, --version                Prints the version and exits
-  -v, --verbose                Increases the output verbosity level. May be
-                               used multiple times
-
-
-Examples:
-
-  To use this program, you must first configure the server information and your
-  credentials (token) to a file named ${PWD}/.lighter.json or
-  ${HOME}/.lighter.json, that will be used for the pull and push operations.
-  This file should look like the following:
-
-    {
-    # example
-    }
-
-  1. Pulls current configuration from server, writes to the screen:
-
-     $ %(prog)s -vv pull
-
-
-  2. Pulls current configuration from server, writes to file:
-
-     $ %(prog)s -vv pull config.json
-
-
-  3. Push configuration (possibly after local changes) back to server:
-
-     $ %(prog)s -vv push config.json
-
-"""
-
+"""Main entry point for lighter."""
 
 import os
-import sys
-
-import logging
-logger = logging.getLogger(__name__)
-
 import pkg_resources
-import docopt
+
+import click
+from click_plugins import with_plugins
+
+from ..log import setup
+logger = setup("lighter")
 
 
-def main(user_input=None):
+class AliasedGroup(click.Group):
+    """Class that handles prefix aliasing for commands."""
 
-  if user_input is not None:
-    argv = user_input
-  else:
-    argv = sys.argv[1:]
+    def get_command(self, ctx, cmd_name):
+        rv = click.Group.get_command(self, ctx, cmd_name)
+        if rv is not None:
+            return rv
+        matches = [x for x in self.list_commands(ctx) if x.startswith(cmd_name)]
+        if not matches:
+            return None
+        elif len(matches) == 1:
+            return click.Group.get_command(self, ctx, matches[0])
+        ctx.fail("Too many matches: %s" % ", ".join(sorted(matches)))
 
-  completions = dict(
-      prog=os.path.basename(sys.argv[0]),
-      version=pkg_resources.require('lighter')[0].version,
-      )
 
-  args = docopt.docopt(
-      __doc__ % completions,
-      argv=argv,
-      version=completions['version'],
-      )
+def raise_on_error(view_func):
+    """Raise a click exception if returned value is not zero.
 
-  return 0
+    Click exits successfully if anything is returned, in order to exit
+    properly when something went wrong an exception must be raised.
+    """
+
+    from functools import wraps
+
+    def _decorator(*args, **kwargs):
+        value = view_func(*args, **kwargs)
+        if value not in [None, 0]:
+            exception = click.ClickException("Error occured")
+            exception.exit_code = value
+            raise exception
+        return value
+
+    return wraps(view_func)(_decorator)
+
+
+# warning: must set LANG and LC_ALL before using click
+# see: https://click.palletsprojects.com/en/7.x/python3/
+if "LANG" not in os.environ:
+    os.environ["LANG"] = "en_US.UTF-8"
+if "LC_ALL" not in os.environ:
+    os.environ["LC_ALL"] = "en_US.UTF-8"
+
+
+@with_plugins(pkg_resources.iter_entry_points("lighter.cli"))
+@click.group(
+    cls=AliasedGroup,
+    context_settings=dict(help_option_names=["-?", "-h", "--help"]),
+)
+def main():
+    """Lighter Zigbee Deconz Controller - see available commands below"""
+
+    pass
