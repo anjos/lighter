@@ -28,6 +28,8 @@ requirements:
     - termcolor
     - requests
     - pyyaml >=5.1
+    - python-dateutil
+    - websocket-client
 
 test:
   imports:

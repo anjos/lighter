@@ -22,6 +22,8 @@ setup(
         "requests",
         "termcolor",
         "pyyaml>=5.1",
+        "python-dateutil",
+        "websocket-client",
     ],
     entry_points={
         "console_scripts": ["lighter = lighter.scripts.lighter:main"],
@@ -48,8 +50,10 @@ setup(
             'scene = lighter.scripts.groups:scene',
             ],
         "lighter.scenes.cli": [
+            'get = lighter.scripts.scenes:get',
             'set = lighter.scripts.scenes:set',
             'setmany = lighter.scripts.scenes:setmany',
+            'recall = lighter.scripts.scenes:recall',
             ],
     },
     classifiers=[

@@ -5,14 +5,22 @@
 
 import os
 import re
+import ssl
 import json
 import time
 import requests
 import itertools
+import datetime
+import threading
+
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+import dateutil.parser
+
+from . import color
 
 
 def _id_predicate(actual_id, actual_name, target_id):
@@ -83,6 +91,7 @@ def setup_server():
         port=config["port"],
         api_key=config.get("api_key"),
         transitiontime=config.get("transitiontime", 0),
+        timeout=config.get("timeout", 10),
     )
 
 
@@ -105,56 +114,153 @@ class Server:
     transitiontime : int
         Transition time in 1/10 seconds between two (light) states.
 
+    timeout : int, float
+        Timeout in seconds or fractions of to wait for light change operations.
+        If set to ``None``, then wait forever.
+
     """
 
-    def __init__(self, host, port, api_key=None, transitiontime=0):
+    def __init__(self, host, port, api_key=None, transitiontime=0, timeout=10):
         self.host = host
         self.port = port
         self.api_key = api_key
         self.transitiontime = transitiontime
+        self.timemout = timeout
 
         # to cache server information
         self.cache = dict()
+        self._hook_socket()
 
-    def _cache_lights(self, force=False):
-        """Reloads the lights information from the server
+    def _hook_socket(self):
+        """Hooks a websocket to allow waiting for actions to take place"""
+
+        _ws_waiting = dict(lights={}, groups={})
+        _ws_lock = threading.RLock()  # allows multiple messages to be recv
+        _ws_can_terminate = threading.Event()
+        _ws_can_terminate.set()  # by default, we can terminate
+
+        def _on_message(socket, message):
+            """Processes a message from the socket"""
+            with _ws_lock:
+                if message["e"] == "changed":
+                    if message["r"] in ("lights", "groups"):
+                        if message["id"] in _ws_waiting[message["r"]]:
+                            logger.debug(
+                                "Detected change in /%s/%s: %s",
+                                message["r"],
+                                message["id"],
+                                message["state"],
+                            )
+                            del _ws_waiting[message["r"]][message["id"]]
+                            if (
+                                len(_ws_waiting["lights"])
+                                + len(_ws_waiting["groups"])
+                            ) == 0:
+                                _ws_can_terminate.set()
+
+        self._ws_waiting = _ws_waiting
+        self._ws_lock = _ws_lock
+        self._ws_can_terminate = _ws_can_terminate
+
+        config = self.get_config()
+        assert config["config"]["websocketnotifyall"]
+
+        import websocket
+
+        websocket.enableTrace(True)
+        server = (
+            "ws://"
+            + config["config"]["ipaddress"]
+            + ":"
+            + str(config["config"]["websocketport"])
+        )
+        self.ws = websocket.WebSocketApp(server, on_message=_on_message)
+
+        self._ws_thread = threading.Thread(
+            target=self.ws.run_forever,
+            kwargs=dict(
+                sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
+            ),
+        )
+        self._ws_thread.daemon = True
+        self._ws_thread.start()
+
+    def wait_for_changes(self, timeout=None):
+        """Waits until all changes have been performed
+
+        This method works as a synchronization point to ensure that state
+        changes have been perceived by the devices connected to the network.
+        It will unblock when changes are done (reported by the websocket).
+
 
         Parameters
         ----------
 
-        force : :obj:`bool`, optional
-            If set, then refresh the current light catalog that is cached
-            internally.
+        timeout : :obj:`int`, optional
+            Number of seconds to wait for, at most.  If set, overrides the
+            internal default
+        """
+        self._ws_can_terminate.wait(timeout=(timeout or self.timeout))
+
+    def _cache_config(self):
+        """Reloads the configuration information from the server, if needs be
         """
 
-        if "lights" not in self.cache or force:
-            parts = [self.api_key, "lights"]
-            self.cache["lights"] = self._get(parts).json()
+        parts = [self.api_key]
+
+        if "config" not in self.cache:
+            response = self._get(parts)
+            self.cache["config"] = response.json()
+            self.cache["config-etag"] = response.headers["ETag"]
+        else:
+            response = self._get(parts, etag=self.cache["config-etag"])
+            if response.status_code == 304:  # not modified
+                assert response.headers["ETag"] == self.cache["config-etag"]
+            else:  # state was updated
+                self.cache["config"] = response.json()
+                self.cache["config-etag"] = response.headers["ETag"]
+
+        return self.cache["config"]
+
+    def _cache_lights(self):
+        """Reloads the lights information from the server, if needs be
+        """
+
+        parts = [self.api_key, "lights"]
+
+        if "lights" not in self.cache:
+            response = self._get(parts)
+            self.cache["lights"] = response.json()
+            self.cache["lights-etag"] = response.headers["ETag"]
+        else:
+            response = self._get(parts, etag=self.cache["lights-etag"])
+            if response.status_code == 304:  # not modified
+                assert response.headers["ETag"] == self.cache["lights-etag"]
+            else:  # state was updated
+                self.cache["lights"] = response.json()
+                self.cache["lights-etag"] = response.headers["ETag"]
 
         return self.cache["lights"]
 
-    def _cache_groups(self, force=False):
+    def _cache_groups(self):
         """Reloads the group information from the server
-
-        Parameters
-        ----------
-
-        force : :obj:`bool`, optional
-            If set, then refresh the current group catalog that is cached
-            internally.
         """
 
-        if "groups" not in self.cache or force:
-            parts = [self.api_key, "groups"]
-            self.cache["groups"] = self._get(parts).json()
+        parts = [self.api_key, "groups"]
+
+        if "groups" not in self.cache:
+            response = self._get(parts)
+            self.cache["groups"] = response.json()
+            self.cache["groups-etag"] = response.headers["ETag"]
+        else:
+            response = self._get(parts, etag=self.cache["groups-etag"])
+            if response.status_code == 304:  # not modified
+                assert response.headers.get("ETag") == self.cache["groups-etag"]
+            else:  # state was updated
+                self.cache["groups"] = response.json()
+                self.cache["groups-etag"] = response.headers["ETag"]
 
         return self.cache["groups"]
-
-    def refresh_cache(self):
-        """Refreshes all internal caches at once"""
-
-        self._cache_lights(force=True)
-        self._cache_groups(force=True)
 
     def get_api_key(self):
         """Tries to fetch an API key from the deconz host
@@ -214,17 +320,20 @@ class Server:
         data : dict
             A dictionary with string -> string mappings that is transmitted
             with the request.
-
-
-        Returns
-        -------
-
-        response : requests.Response
-            An object containing the server response
         """
-        return requests.post(self._api(parts), data=json.dumps(data))
+        url = self._api(parts)
+        data = json.dumps(data)
+        logger.debug("POST '%s' data: %s", url, data)
+        response = requests.post(url, data=data)
+        if not response.ok:
+            logger.error("Unable to POST '%s' data: %s", url, data)
+            logger.error(
+                "Returned %d (%s)", response.status_code, response.reason
+            )
+        data = response.json()
+        logger.debug("Response:\n%s", json.dumps(data, indent=2))
 
-    def _get(self, parts):
+    def _get(self, parts, etag=None):
         """GET an API request
 
         Parameters
@@ -234,6 +343,9 @@ class Server:
             A list of strings to join forming an url like
             ``parts[0]/parts[1]/...``
 
+        etag : str
+            If set, transmit the ETag header to the host
+
 
         Returns
         -------
@@ -241,7 +353,19 @@ class Server:
         response : requests.Response
             An object containing the server response
         """
-        return requests.get(self._api(parts))
+
+        url = self._api(parts)
+        logger.debug("GET '%s'", url)
+        headers = {}
+        if etag is not None:
+            headers["If-None-Match"] = etag
+        response = requests.get(url, headers=headers)
+        if not response.ok:
+            logger.error("Unable to GET '%s'", url)
+            logger.error(
+                "Returned %d (%s)", response.status_code, response.reason
+            )
+        return response
 
     def _put(self, parts, data):
         """PUT an API request
@@ -256,30 +380,50 @@ class Server:
         data : dict
             A dictionary with string -> string mappings that is transmitted
             with the request.
-
-
-        Returns
-        -------
-
-        response : requests.Response
-            An object containing the server response
         """
-        return requests.put(self._api(parts), data=json.dumps(data))
 
-    def _translate_light_state(self, light_type, ct_bounds, values):
+        url = self._api(parts)
+        data = json.dumps(data)
+        logger.debug("PUT '%s' data: %s", url, data)
+        response = requests.put(url, data=data)
+        if not response.ok:
+            logger.error("Unable to PUT '%s' data: %s", url, data)
+            logger.error(
+                "Returned %d (%s)", response.status_code, response.reason
+            )
+        data = response.json()
+        logger.debug("Response:\n%s", json.dumps(data, indent=2))
+
+    def _delete(self, parts):
+        """DELETE an API request
+
+        Parameters
+        ----------
+
+        parts : :obj:`list` of :obj:`str`
+            A list of strings to join forming an url like
+            ``parts[0]/parts[1]/...``
+        """
+
+        url = self._api(parts)
+        logger.debug("DELETE '%s'", url)
+        response = requests.delete(url)
+        if not response.ok:
+            logger.error("Unable to DELETE '%s'", url)
+            logger.error(
+                "Returned %d (%s)", response.status_code, response.reason
+            )
+        data = response.json()
+        logger.debug("Response:\n%s", json.dumps(data, indent=2))
+
+    def _translate_light_state(self, state, ct_bounds, values):
         """Translates light state from a string with rough details
 
         Parameters
         ----------
 
-        light_type : str
-            A string representing the light type we are translating values for.
-            Different light types get specific translations.  For example, if
-            the light type is a switch, setting brightness makes no sense.
-            Example values are ``Color temperature light`` (Philips/IKEA),
-            ``Extended color light`` (Philips, LED bars),  ``On/Off plug-in
-            unit`` (IKEA on/off control switches), ``Color light`` (IKEA
-            bulbs).
+        state : dict
+            The current light state
 
         ct_bounds : :obj:`list` of :obj:`int`
             A list of exactly two integers indicating the minimum and maximum
@@ -318,11 +462,7 @@ class Server:
 
         def _ct(kelvin):
             """Converts to CT scale from Kelvins"""
-            value = min(max(kelvin, 2000), 6500)  # bounded
-            value = (
-                ((value - 2000.0) / (6500.0 - 2000.0)) * (500.0 - 153.0)
-            ) + 153.0
-            value = 653 - int(round(value))  # range is inverted
+            value = color.color_temperature_kelvin_to_mired(kelvin)
 
             # we respect the maximum boundaries of the light - return
             # whatever we can actually set.
@@ -343,13 +483,19 @@ class Server:
 
             return value
 
-        # consumes keywords one by one, and set internal elements
-        retval = {
-            "on": True,
-            "alert": "none",
-            "transitiontime": self.transitiontime,
-        }
+        def _hs(kelvin):
+            """Converts to HS from Kelvins"""
+            return color.color_temperature_to_hs(kelvin)
 
+        def _xy(kelvin):
+            """Converts to XY from Kelvins"""
+            h, s = _hs(kelvin)
+            return color.color_hs_to_xy(h, s)
+
+        # consumes keywords one by one, and set internal elements
+        retval = {"transitiontime": self.transitiontime}
+
+        temp = None
         for key in values:
 
             if key in ["off", "0", "0%"]:
@@ -362,24 +508,24 @@ class Server:
                 retval["bri"] = _bri(int(key[:-1]))
 
             elif key.endswith("k"):  # temperature
-                retval["ct"] = _ct(int(key[:-1]))
-
+                temp = int(key[:-1])
             elif key in ["candle"]:
-                retval["ct"] = _ct(2000)  # 2600 is min for IKEA/Philips lights
+                temp = 2000  # 2600 is min for IKEA/Philips lights?
             elif key in ["warm"]:
-                retval["ct"] = _ct(2700)
+                temp = 2700
             elif key in ["warm+"]:
-                retval["ct"] = _ct(3000)
+                temp = 3000
             elif key in ["soft"]:
-                retval["ct"] = _ct(3500)
+                temp = 3500
             elif key in ["natural"]:
-                retval["ct"] = _ct(3700)
+                temp = 3700
             elif key in ["cool"]:
-                retval["ct"] = _ct(4000)
+                temp = 4000
             elif key in ["day-"]:
-                retval["ct"] = _ct(5000)  # 5190 is max for IKEA lights
+                temp = 5000  # 5190 is max for IKEA lights?
             elif key in ["day"]:
-                retval["ct"] = _ct(6500)  # 6500 is max for Philips lights
+                temp = 6500  # 6500 is max for Philips lights?
+
             elif key in ["alert"]:
                 retval["alert"] = "lselect"
 
@@ -389,13 +535,31 @@ class Server:
                     "when setting the light state" % key
                 )
 
-        if light_type.startswith("On/Off"):  # ON/OFF switch
+        if state.get("colormode") is None:
             return {"on": retval["on"]}
         else:
+            # if the light is turned on, and the user wants to turn it off,
+            # then only set its brightness to zero
+            if state["on"]:
+                if "on" in retval and not retval["on"]:
+                    retval["bri"] = 0
+                    del retval["on"]
             retval["transitiontime"] = self.transitiontime
-            return retval
 
-    def config_pull(self):
+        if temp is not None:  # user wants to set light temperature
+            if state["colormode"] == "hs":
+                h, s = _hs(temp)
+                retval["hue"] = h
+                retval["sat"] = s
+            elif state["colormode"] == "xy":
+                x, y = _xy(temp)
+                retval["xy"] = [x, y]
+            else:  # mired color temperature
+                retval["ct"] = _ct(temp)
+
+        return retval
+
+    def get_config(self):
         """Grabs the current server configuration
 
         Returns
@@ -405,7 +569,32 @@ class Server:
             A dictionary containing the complete server configuration
         """
 
-        return self._get([self.api_key]).json()
+        return self._cache_config()
+
+    def remove_old_apikeys(self, days_unused=30):
+        """Removes all API keys that have not been used by a number of days
+
+        Parameters
+        ----------
+
+        days_unused : :obj:`int`, optional
+            Number of days to consider last usage before removing the key
+        """
+
+        config = self._cache_config()
+        whitelist = config["config"]["whitelist"]
+        now = datetime.datetime.now()
+        for key, info in whitelist.items():
+            last_used = dateutil.parser.parse(info["last use date"])
+            delta = now - last_used
+            if delta.days > days_unused:
+                logger.info(
+                    "Erasing API key '%s' that was last used %s (%d days ago)",
+                    key,
+                    last_used,
+                    delta.days,
+                )
+                self._delete([self.api_key, "config", "whitelist", key])
 
     def get_lights(self, id):
         """Returns all lights configured, or a specific one
@@ -469,18 +658,7 @@ class Server:
 
         for k, v in affected.items():
             parts = [self.api_key, "lights", str(k)]
-            response = self._put(parts, data={"name": name})
-            if response.status_code != 200:
-                logger.error("Unable to set light %s name" % id)
-            data = response.json()
-            for entry in data:
-                if entry.get("success") is not None:
-                    for set_address, set_value in entry["success"].items():
-                        logger.debug(
-                            "Light '%s' renamed to '%s'", set_address, set_value
-                        )
-                else:
-                    logger.error("%s", entry)
+            self._put(parts, data={"name": name})
 
     def _set_single_light(self, id, data):
         """Internal method to set a single light to a given state
@@ -497,18 +675,10 @@ class Server:
 
         """
         parts = [self.api_key, "lights", str(id), "state"]
-        response = self._put(parts, data=data)
-        if response.status_code != 200:
-            logger.error("Unable to set light %s name" % id)
-        data = response.json()
-        for entry in data:
-            if entry.get("success") is not None:
-                for set_address, set_value in entry["success"].items():
-                    logger.debug(
-                        "Light '%s' set to '%s'", set_address, set_value
-                    )
-            else:
-                logger.error("%s", entry)
+        with self._ws_lock:
+            self._ws_waiting["lights"][id] = data
+            self._ws_can_terminate.clear()
+        self._put(parts, data=data)
 
     def _set_light_state_dict(self, d, values):
         """Internal method, set light state from dictionary
@@ -533,7 +703,7 @@ class Server:
 
         for k, v in d.items():
             data = self._translate_light_state(
-                v["type"], (v["ctmin"], v["ctmax"]), values
+                v["state"], (v["ctmin"], v["ctmax"]), values
             )
             self._set_single_light(k, data)
 
@@ -682,9 +852,7 @@ class Server:
             logger.debug("%d lights will be assigned to the group", len(lights))
 
         for k in affected:
-
             parts = [self.api_key, "groups", str(k)]
-
             data = {}
             if name is not None:
                 data["name"] = name
@@ -692,22 +860,7 @@ class Server:
                 data["lights"] = lights
             if hidden is not None:
                 data["hidden"] = hidden
-
-            response = self._put(parts, data=data)
-
-            if response.status_code != 200:
-                logger.error("Unable to set group %s attributes" % k)
-            data = response.json()
-            for entry in data:
-                if entry.get("success") is not None:
-                    for set_address, set_value in entry["success"].items():
-                        logger.debug(
-                            "Group '%s' attribute set to '%s'",
-                            set_address,
-                            set_value,
-                        )
-                else:
-                    logger.error("%s", entry)
+            self._put(parts, data=data)
 
     def set_group_state(self, id, values):
         """Set group to a **single** state
@@ -738,21 +891,10 @@ class Server:
 
         # for groups, we respect max/min color temperature for the
         # most restrictive lights (IKEA bulbs)
-        data = self._translate_light_state("Group", (250, 454), values)
         for k, v in affected.items():
             parts = [self.api_key, "groups", str(k), "action"]
-            response = self._put(parts, data=data)
-            if response.status_code != 200:
-                logger.error("Unable to set group %s name" % k)
-            data = response.json()
-            for entry in data:
-                if entry.get("success") is not None:
-                    for set_address, set_value in entry["success"].items():
-                        logger.debug(
-                            "Group '%s' set to '%s'", set_address, set_value
-                        )
-                else:
-                    logger.error("%s", entry)
+            data = self._translate_light_state(v["action"], (250, 454), values)
+            self._put(parts, data=data)
 
     def _select_lights_by_integer_id(self, ids):
         """Selects all relevant group lights
@@ -873,11 +1015,18 @@ class Server:
             to which they will be set
 
         """
-        from .scripts.utils import handle_id
 
         for k, v in config.items():
-            k = handle_id(k)
+            k = _handle_id(k)
             self._set_group_light_state(id, k, v.split())
+            if not self.wait_for_changes():
+                logger.error(
+                    "Timed-out while waiting for light changes (%s -> %s)", k, v
+                )
+            else:
+                logger.info(
+                    "Server acknowledged light state change (%s -> %s)", k, v
+                )
 
     def store_scene(self, id, scene):
         """Stores the given scene
@@ -901,8 +1050,7 @@ class Server:
         if len(group) > 1:
             raise RuntimeError(
                 "Scene storage can only affect one group "
-                "at a time.  You selected %d groups instead"
-                % (len(group),)
+                "at a time.  You selected %d groups instead" % (len(group),)
             )
         for k, v in group.items():
             scene = _handle_id(scene)
@@ -929,19 +1077,7 @@ class Server:
                     s["id"],
                     "store",
                 ]
-                response = self._put(parts, data=data)
-                if response.status_code != 200:
-                    logger.error(
-                        "Unable to store scene %s of group %s"
-                        % (s["name"], v["name"])
-                    )
-                data = response.json()
-                for entry in data:
-                    if entry.get("success") is not None:
-                        for set_address, set_value in entry["success"].items():
-                            logger.debug("Stored scene '%s'", set_value)
-                    else:
-                        logger.error("%s", entry)
+                self._put(parts, data={"transitiontime": self.transitiontime})
 
     def restore_light_state(self, d):
         """Restores the state of lights given an input dictionary
@@ -960,7 +1096,110 @@ class Server:
                 del state["alert"]
             if "reachable" in state:
                 del state["reachable"]
+            if "effect" in state:
+                del state["effect"]
+            if "on" in state and not state["on"]:
+                state = dict(on=False)
             if "colormode" in state:
+                cm = state["colormode"]
                 del state["colormode"]
+                if cm == "ct":
+                    if "xy" in state:
+                        del state["xy"]
+                    if "hue" in state:
+                        del state["hue"]
+                    if "sat" in state:
+                        del state["sat"]
+                if cm == "xy":
+                    if "ct" in state:
+                        del state["ct"]
+                    if "hue" in state:
+                        del state["hue"]
+                    if "sat" in state:
+                        del state["sat"]
+                if cm == "hs":
+                    if "ct" in state:
+                        del state["ct"]
+                    if "xy" in state:
+                        del state["xy"]
             state["transitiontime"] = self.transitiontime
             self._set_single_light(k, state)
+        if not self.wait_for_changes():
+            logger.error("Timed-out while waiting for light changes")
+        else:
+            logger.info("Server acknowledged light state change")
+
+    def get_scenes(self, group, id=None):
+        """Returns one or more scenes from a given group
+
+
+        Parameters
+        ----------
+
+        group : str
+            The group identifier (integer wrapped as a string)
+
+        id : str, int
+            The scene identifier (:obj:`int`), its name (:obj:`str`) or a
+            regular expression (:obj:`str`, prefixed and suffixed by ``/``) to
+            match names of group on the server.  If not set, returns data from
+            all scenes
+
+
+        Returns
+        -------
+
+        scenes : dict
+            A dictionary mapping :obj:`str` (actually integers) to :obj:`dict`
+            containing the scenes the group identified by ``group``.
+
+        """
+
+        id = _handle_id(id)
+
+        parts = [self.api_key, "groups", group, "scenes"]
+        candidates = self._get(parts).json()
+        if id is not None:
+            candidates = dict(
+                [
+                    (k, v)
+                    for k, v in candidates.items()
+                    if _id_predicate(k, v["name"], id)
+                ]
+            )
+
+        retval = {}
+        for k in candidates:
+            parts_scenes = parts + [k]
+            retval[k] = self._get(parts_scenes).json()
+        return retval
+
+    def recall_scene(self, group, scene):
+        """Recalls a given scene from a given group
+
+
+        Parameters
+        ----------
+
+        group : str
+            The group identifier (:obj:`int`), its name (:obj:`str`) or a
+            regular expression (:obj:`str`, prefixed and suffixed by ``/``) to
+            match names of group on the server.
+
+        id : str, int
+            The scene identifier (:obj:`int`), its name (:obj:`str`) or a
+            regular expression (:obj:`str`, prefixed and suffixed by ``/``) to
+            match names of group on the server.
+        """
+
+        group = _handle_id(group)
+        scene = _handle_id(scene)
+
+        groups = self.get_groups(group)
+
+        for gk, gv in groups.items():
+            parts = [self.api_key, "groups", gk, "scenes"]
+            scenes = self.get_scenes(gk, scene)
+            for sk, sv in scenes.items():
+                parts_scene = parts + [sk, "recall"]
+                self._put(parts_scene, data={})

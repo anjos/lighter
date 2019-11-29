@@ -29,6 +29,49 @@ def scenes():
     epilog="""
 Examples:
 
+  1. Gets information on all scenes available for a group (sort by id):
+
+     $ lighter -vv scenes get 1
+
+  2. Gets information on all scenes available for a group (sort by name):
+
+     $ lighter -vv scenes get --sort-name Office
+
+  3. Gets information about one specific scene (1) of a group (1):
+
+     $ lighter -vv scenes get 1 1
+
+"""
+)
+@click.argument("id", required=True)
+@click.argument("scene", required=False, default=None)
+@click.option(
+    "-n",
+    "--sort-name/--no-sort-name",
+    default=False,
+    help="If set and outputting information for all installed groups, "
+    "then sort information by asset name instead of using their "
+    "(integer) identifier",
+)
+@verbosity_option()
+@lighter.raise_on_error
+def get(id, scene, sort_name):
+    """Gets information from some or all scenes in a group in the server
+    """
+
+    server = setup_server()
+    groups = server.get_groups(id)
+
+    for k in groups:
+        print("Group: %s" % k)
+        data = server.get_scenes(k, scene)
+        print(json.dumps(data, indent=4))
+
+
+@scenes.command(
+    epilog="""
+Examples:
+
   1. Sets scene 2 from group 1 to the values indicated in the YAML file
 
      $ lighter -vv scenes set 1 2 file.yaml
@@ -61,8 +104,7 @@ def set(id, scene, file):
     server = setup_server()
 
     # store current light state, so it can be recovered
-    server.refresh_cache()
-    old_state = server.get_group_lights(id)  # gets all group lights
+    old_state = server.get_group_lights(id)
 
     # loads the input YAML file
     with open(file, "rb") as f:
@@ -124,10 +166,23 @@ def setmany(file):
     After setting the scene, the previous state of lights is recovered
     """
 
-    server = setup_server()
+    def _print_state(s):
+        for k,v in s.items():
+            echo_normal(
+                    "%s: %s - on: %s, bri: %s, ct: %s, hue: %s, sat: %s, xy: %s"
+                    % (
+                        k,
+                        v["name"],
+                        v["state"]["on"],
+                        v["state"]["bri"],
+                        v["state"].get("ct", "?"),
+                        v["state"].get("hue", "?"),
+                        v["state"].get("sat", "?"),
+                        v["state"].get("xy", "?"),
+                        )
+                    )
 
-    # store current light state, so it can be recovered
-    server.refresh_cache()
+    server = setup_server()
 
     # loads the input YAML file
     with open(file, "rb") as f:
@@ -135,7 +190,34 @@ def setmany(file):
 
     for group, scenes in groups.items():
         for scene, lights in scenes.items():
+            server.recall_scene(group, scene)
             old_state = server.get_group_lights(group)
             server.set_group_lights(group, lights)
             server.store_scene(group, scene)
             server.restore_light_state(old_state)
+
+
+@scenes.command(
+    epilog="""
+Examples:
+
+  1. Recalls scene 2 from group 1:
+
+     $ lighter -vv scenes recall 1 2
+
+  2. Recalls scene "Relax" on "Living room":
+
+     $ lighter -vv scenes recall "Living room" "Relax"
+
+"""
+)
+@click.argument("id", required=True)
+@click.argument("scene", required=True)
+@verbosity_option()
+@lighter.raise_on_error
+def recall(id, scene):
+    """Recalls a scene by id or name
+    """
+
+    server = setup_server()
+    server.recall_scene(id, scene)

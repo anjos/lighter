@@ -9,8 +9,7 @@ from click_plugins import with_plugins
 
 from . import lighter
 
-from ..config import load as config_load
-from ..deconz import Server
+from ..deconz import setup_server
 
 from ..log import verbosity_option, get_logger, echo_normal
 logger = get_logger(__name__)
@@ -40,23 +39,9 @@ def get():
     """Gets the whole webserver configuration in JSON format
     """
 
-    config = config_load()
-    if not config:
-        raise RuntimeError("No configuration file loaded - cannot proceed")
-
-    server = Server(
-            host=config["host"],
-            port=config["port"],
-            api_key=config.get("api_key"),
-            transitiontime=config.get("transitiontime", 10),
-            )
-
-    data = server.config_pull()
-    if args["<path>"]:
-        with open(args["<path>"], "wt") as f:
-            f.write(json.dumps(data, indent=4))
-    else:
-        print(json.dumps(data, indent=4))
+    server = setup_server()
+    data = server.get_config()
+    print(json.dumps(data, indent=4))
 
 
 @config.command(
@@ -75,10 +60,27 @@ def apikey():
     """Gets a new API key from the server
     """
 
-    config = config_load()
-    if not config:
-        raise RuntimeError("No configuration file loaded - cannot proceed")
-
-    server = Server(host=config["host"], port=config["port"])
+    server = setup_server()
     key = server.get_api_key()
     echo_normal("API key: %s" % key)
+
+
+
+@config.command(
+    epilog="""
+Examples:
+
+  1. Cleans-up old API keys from the server
+
+     $ lighter -vv config cleanup
+
+"""
+)
+@verbosity_option()
+@lighter.raise_on_error
+def cleanup():
+    """Cleans-up old API keys from the server
+    """
+
+    server = setup_server()
+    server.remove_old_apikeys(days_unused=30)
