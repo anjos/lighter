@@ -125,7 +125,7 @@ class Server:
         self.port = port
         self.api_key = api_key
         self.transitiontime = transitiontime
-        self.timemout = timeout
+        self.timeout = timeout
 
         # to cache server information
         self.cache = dict()
@@ -142,8 +142,9 @@ class Server:
         def _on_message(socket, message):
             """Processes a message from the socket"""
             with _ws_lock:
+                message = json.loads(message)
                 if message["e"] == "changed":
-                    if message["r"] in ("lights", "groups"):
+                    if message["r"] in _ws_waiting:
                         if message["id"] in _ws_waiting[message["r"]]:
                             logger.debug(
                                 "Detected change in /%s/%s: %s",
@@ -152,10 +153,12 @@ class Server:
                                 message["state"],
                             )
                             del _ws_waiting[message["r"]][message["id"]]
-                            if (
-                                len(_ws_waiting["lights"])
-                                + len(_ws_waiting["groups"])
-                            ) == 0:
+                            waiting_on = len(_ws_waiting["lights"]) + len(
+                                _ws_waiting["groups"]
+                            )
+                            logger.debug("Waiting on %d elements", waiting_on)
+                            if waiting_on == 0:
+                                logger.debug("OK to terminate")
                                 _ws_can_terminate.set()
 
         self._ws_waiting = _ws_waiting
@@ -200,6 +203,7 @@ class Server:
             Number of seconds to wait for, at most.  If set, overrides the
             internal default
         """
+        logger.debug("Waiting for terminate OK")
         self._ws_can_terminate.wait(timeout=(timeout or self.timeout))
 
     def _cache_config(self):
@@ -680,12 +684,43 @@ class Server:
             self._ws_can_terminate.clear()
         self._put(parts, data=data)
 
+    def _get_light_state_dict(self, d, values):
+        """Internal method, returns to-be-set light state from dictionary
+
+
+        Parameters
+        ----------
+
+        d : dict
+            A dictionary, e.g. as returned by :py:meth:`get_lights`.
+
+        values : :obj:`list` of :obj:`str`
+            A list of strings that can be absorbed by
+            :py:meth:`_translate_light_state`, that will be analyzed in
+            sequence and applied to each light matched.
+
+
+        Returns
+        -------
+
+        states : dict
+            A dictionary containing the final settable state of each light
+            defined in ``d``
+        """
+
+        state = dict()
+        for k, v in d.items():
+            state[k] = self._translate_light_state(
+                v["state"], (v.get("ctmin", 250), v.get("ctmax", 454)), values
+            )
+        return state
+
     def _set_light_state_dict(self, d, values):
         """Internal method, set light state from dictionary
 
         This method will apply the stage change defined by ``values`` to all
         lights in the dictionary ``d``.  It is similar to
-        :py:meth:`set_light_name`, but acts on precalculated lights only, as
+        :py:meth:`set_light_state`, but acts on precalculated lights only, as
         provided by ``d``.
 
 
@@ -701,11 +736,8 @@ class Server:
             sequence and applied to each light matched.
         """
 
-        for k, v in d.items():
-            data = self._translate_light_state(
-                v["state"], (v["ctmin"], v["ctmax"]), values
-            )
-            self._set_single_light(k, data)
+        for k, v in self._get_light_state_dict(d, values).items():
+            self._set_single_light(k, v)
 
     def set_light_state(self, id, values):
         """Set light state
@@ -1041,6 +1073,7 @@ class Server:
         scene : str, int
             The scene identifier (:obj:`int`) or its name (:obj:`str`), within
             the group
+
         """
 
         group = self.get_groups(id)
@@ -1078,6 +1111,66 @@ class Server:
                     "store",
                 ]
                 self._put(parts, data={"transitiontime": self.transitiontime})
+
+    def store_scene2(self, id, scene, config):
+        """Stores the given scene, given its desired properties
+
+
+        Parameters
+        ----------
+
+        id : str, int
+            The group identifier (:obj:`int`) or its name (:obj:`str`)
+
+        scene : str, int
+            The scene identifier (:obj:`int`) or its name (:obj:`str`), within
+            the group
+
+        config : dict
+            A dictionary mapping light identifiers (int, str) to state values
+            to which they should be set
+        """
+
+        groups = self.get_groups(id)
+
+        if len(groups) == 0:
+            raise RuntimeError(
+                "Did not find any groups with id == '%s'" % (id,)
+            )
+
+        for gk, gv in groups.items():
+            # select light identifiers that match, from the group lights
+            group_lights = self._select_lights_by_integer_id(gv["lights"])
+
+            # the resulting state to set lights in this scene/group is the
+            # cumulative state by applying all changes listed, in the sequence
+            # they were found
+            state_lights = dict()
+            for ck, cv in config.items():
+                light_id = _handle_id(ck)
+                affected_lights = dict(
+                    [
+                        (k, v)
+                        for k, v in group_lights.items()
+                        if _id_predicate(k, v["name"], light_id)
+                    ]
+                )
+                state_lights.update(self._get_light_state_dict(affected_lights,
+                    cv.split()))
+
+            scenes = self.get_scenes(gk, scene)
+            if len(scenes) == 0:
+                raise RuntimeError(
+                    "Did not find any scenes with id "
+                    "== '%s' in group '%s'" % (scene, gv["name"])
+                )
+
+            for sk, sv in scenes.items():
+                # sets each light in the scene
+                for lk, lv in state_lights.items():
+                    parts = [self.api_key, 'groups', gk, 'scenes', sk,
+                            'lights', lk, 'state']
+                    self._put(parts, data=lv)
 
     def restore_light_state(self, d):
         """Restores the state of lights given an input dictionary
@@ -1197,9 +1290,16 @@ class Server:
 
         groups = self.get_groups(group)
 
+        recalled = 0
         for gk, gv in groups.items():
             parts = [self.api_key, "groups", gk, "scenes"]
             scenes = self.get_scenes(gk, scene)
             for sk, sv in scenes.items():
                 parts_scene = parts + [sk, "recall"]
                 self._put(parts_scene, data={})
+                recalled += 1
+
+        if recalled == 0:
+            raise RuntimeError(
+                "Did not find scene '%s' at group '%s'" % (scene, group)
+            )

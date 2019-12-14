@@ -110,9 +110,7 @@ def set(id, scene, file):
     with open(file, "rb") as f:
         states = ordered_yaml_load(f)
 
-    server.set_group_lights(id, states)
-    server.store_scene(id, scene)
-    server.restore_light_state(old_state)
+    server.store_scene2(id, scene, states)
 
 
 @scenes.command(
@@ -166,22 +164,6 @@ def setmany(file):
     After setting the scene, the previous state of lights is recovered
     """
 
-    def _print_state(s):
-        for k,v in s.items():
-            echo_normal(
-                    "%s: %s - on: %s, bri: %s, ct: %s, hue: %s, sat: %s, xy: %s"
-                    % (
-                        k,
-                        v["name"],
-                        v["state"]["on"],
-                        v["state"]["bri"],
-                        v["state"].get("ct", "?"),
-                        v["state"].get("hue", "?"),
-                        v["state"].get("sat", "?"),
-                        v["state"].get("xy", "?"),
-                        )
-                    )
-
     server = setup_server()
 
     # loads the input YAML file
@@ -190,11 +172,7 @@ def setmany(file):
 
     for group, scenes in groups.items():
         for scene, lights in scenes.items():
-            server.recall_scene(group, scene)
-            old_state = server.get_group_lights(group)
-            server.set_group_lights(group, lights)
-            server.store_scene(group, scene)
-            server.restore_light_state(old_state)
+            server.store_scene2(group, scene, lights)
 
 
 @scenes.command(
