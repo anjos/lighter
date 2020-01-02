@@ -10,8 +10,8 @@ Living room:
         /.*/: "off"
         /.*Dining.*/: "on 100% natural"
         /.*Photo Frame.*/: "on"
-        /.*Reading.*/: "on 90% natural"
-        /.*Corridor.*/: "on 90% natural"
+        /.*Reading.*/: "on 100% natural"
+        /.*Corridor.*/: "on 100% natural"
     Bright:
         /.*/: "on 100% natural"
         /.*Photo Frame.*/: "on"
