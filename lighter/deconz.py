@@ -135,6 +135,7 @@ def setup_server():
         api_key=config.get("api_key"),
         transitiontime=config.get("transitiontime", 0),
         timeout=config.get("timeout", 5),
+        retrydelay=config.get("retrydelay", 0.2),
     )
 
 
@@ -158,17 +159,23 @@ class Server:
         Transition time in 1/10 seconds between two (light) states.
 
     timeout : int, float
-        Time int seconds or fractions to wait for lights to reach a particular
+        Time in seconds or fractions to wait for lights to reach a particular
         state before issuing the next command (e.g. storing a scene)
+
+    retrydelay : float
+        Time in seconds or fractions to wait for retries, if the server signals
+        its busy.
 
     """
 
-    def __init__(self, host, port, api_key=None, transitiontime=0, timeout=5):
+    def __init__(self, host, port, api_key=None, transitiontime=0, timeout=5,
+            retrydelay=0.2):
         self.host = host
         self.port = port
         self.api_key = api_key
         self.transitiontime = transitiontime
         self.timeout = timeout
+        self.retrydelay = retrydelay
 
         # to cache server information
         self.cache = dict()
@@ -349,7 +356,7 @@ class Server:
                 if entry["error"]["type"] == 901 and retry > 0:
                     logger.warning("Server got BUSY calling POST '%s' - " \
                             "retrying (left: %d)", "/".join(parts), retry)
-                    time.sleep(0.2)
+                    time.sleep(self.retrydelay)
                     return self._post(parts, data, retry-1)
                 logger.error("Call to POST '%s' data: %s returned:\n%s", url,
                         data, json.dumps(entry, indent=2))
@@ -420,7 +427,7 @@ class Server:
                 if entry["error"]["type"] == 901 and retry > 0:
                     logger.warning("Server got BUSY calling PUT '%s' - " \
                             "retrying (left: %d)", "/".join(parts), retry)
-                    time.sleep(0.2)
+                    time.sleep(self.retrydelay)
                     return self._put(parts, data, retry-1)
                 logger.error("Call to PUT '%s' data: %s returned:\n%s", url,
                         serial_data, json.dumps(entry, indent=2))
@@ -451,7 +458,7 @@ class Server:
                 if entry["error"]["type"] == 901 and retry > 0:
                     logger.warning("Server got BUSY calling DELETE '%s' - " \
                             "retrying (left: %d)", "/".join(parts), retry)
-                    time.sleep(0.2)
+                    time.sleep(self.retrydelay)
                     return self._delete(parts, retry-1)
                 logger.error("Call to DELETE '%s' returned:\n%s", url,
                         json.dumps(entry, indent=2))
