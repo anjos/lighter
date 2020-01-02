@@ -135,7 +135,7 @@ def setup_server():
         api_key=config.get("api_key"),
         transitiontime=config.get("transitiontime", 0),
         timeout=config.get("timeout", 5),
-        retrydelay=config.get("retrydelay", 0.2),
+        retrydelay=config.get("retrydelay", 1.0),
     )
 
 
@@ -169,7 +169,7 @@ class Server:
     """
 
     def __init__(self, host, port, api_key=None, transitiontime=0, timeout=5,
-            retrydelay=0.2):
+            retrydelay=1.0):
         self.host = host
         self.port = port
         self.api_key = api_key
@@ -1106,6 +1106,7 @@ class Server:
         for k, v in config.items():
             k = _handle_id(k)
             self._set_group_light_state(id, k, v.split())
+            time.sleep(self.retrydelay)
 
     def store_scene(self, id, scene):
         """Stores the given scene
