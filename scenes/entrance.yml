@@ -1,0 +1,8 @@
+Entrance:
+    Cozy:
+        /.*/: "off"
+        /.*Photo Frame.*/: "on"
+        /.*Reading.*/: "on 60% warm+"
+    Bright:
+        /.*/: "on 100% natural"
+        /.*Photo Frame.*/: "on"

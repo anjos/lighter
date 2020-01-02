@@ -1,0 +1,7 @@
+Balcony:
+    Cozy:
+        /.*/: "off"
+        /.*Bar.*/: "on 60% warm"
+        /.*Xmas.*/: "on"
+    Bright:
+        /.*/: "on 100% natural"

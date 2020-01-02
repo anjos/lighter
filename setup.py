@@ -23,7 +23,7 @@ setup(
         "termcolor",
         "pyyaml>=5.1",
         "python-dateutil",
-        "websocket-client",
+        "tqdm",
     ],
     entry_points={
         "console_scripts": ["lighter = lighter.scripts.lighter:main"],

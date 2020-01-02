@@ -1,0 +1,6 @@
+Kitchen:
+    Cozy:
+        /.*/: "off"
+        /.*Counter.*/: "on"
+    Bright:
+        /.*/: "on 100% natural"

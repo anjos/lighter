@@ -1,0 +1,10 @@
+Everything:
+    Arriving:
+        /.*/: "off"
+        /.*Reading.*/: "on 90% soft"
+        /.*Photo Frame.*/: "on"
+        /^Kitchen Ceiling.*/: "on 100% natural"
+        /^Kitchen Counter.*/: "on"
+        /^Living.*Dining.*/: "on 100% natural"
+        /.*Corridor.*/: "on 90% natural"
+        /^Office Window.*/: "on 70% soft"

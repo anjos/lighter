@@ -1,0 +1,9 @@
+Office:
+    Cozy:
+        /.*/: "off"
+        Office Window: "on 30% warm"
+    Reading:
+        /.*/: "off"
+        Office Window: "on 60% soft"
+    Bright:
+        /.*/: "on 100% natural"

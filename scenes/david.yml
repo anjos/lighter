@@ -1,0 +1,9 @@
+David:
+    Sleeping:
+        /.*/: "off"
+        /.*Reading Door.*/: "on 2% candle"
+    Reading:
+        /.*/: "off"
+        /.*Reading.*/: "on 90% soft"
+    Bright:
+        /.*/: "on 100% natural"

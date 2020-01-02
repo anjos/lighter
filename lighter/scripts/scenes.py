@@ -110,7 +110,15 @@ def set(id, scene, file):
     with open(file, "rb") as f:
         states = ordered_yaml_load(f)
 
-    server.store_scene2(id, scene, states)
+    # this is the order implemented in phoscon app that is known to work
+    server.recall_scene(group, scene)
+    server.set_group_lights(id, states)
+    echo_normal("Waiting for %s lights to stabilize..." % (group,))
+    server.wait_user_or_timeout()
+    server.store_scene(id, scene)
+    echo_normal("Waiting for %s lights to store scene %s..." % (group, scene,))
+    server.wait_user_or_timeout()
+    server.restore_light_state(old_state)
 
 
 @scenes.command(
@@ -156,9 +164,15 @@ Examples:
     type=click.Path(exists=True, file_okay=True, dir_okay=False),
     required=True,
 )
+@click.option(
+    "-t",
+    "--timeout",
+    type=int,
+    help="Overrides default timeout from .lighter.json",
+)
 @verbosity_option()
 @lighter.raise_on_error
-def setmany(file):
+def setmany(file, timeout):
     """Resets all listed scenes
 
     After setting the scene, the previous state of lights is recovered
@@ -170,9 +184,25 @@ def setmany(file):
     with open(file, "rb") as f:
         groups = ordered_yaml_load(f)
 
+    timeout = timeout or server.timeout
+    server.timeout = timeout
     for group, scenes in groups.items():
         for scene, lights in scenes.items():
-            server.store_scene2(group, scene, lights)
+            # how it is implemented in phoscon app
+            echo_normal("Setting scene \"%s\" on \"%s\"" % (scene, group))
+            old_state = server.get_group_lights(group)
+            logger.info("Recalling scene...")
+            server.recall_scene(group, scene)
+            #logger.info("Waiting for scene to stabilize...")
+            #server.wait_user_or_timeout()
+            server.set_group_lights(group, lights)
+            logger.info("Waiting for lights to change...")
+            server.wait_user_or_timeout()
+            server.store_scene(group, scene)
+            logger.info("Waiting for lights to store scene...")
+            server.wait_user_or_timeout()
+            logger.info("Restoring previous light state...")
+            server.restore_light_state(old_state)
 
 
 @scenes.command(

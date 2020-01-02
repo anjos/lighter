@@ -1,0 +1,7 @@
+A2:
+    Cozy:
+        /.*/: "off"
+        /.*Reading Andre.*/: "on 2% candle"
+    Reading:
+        /.*/: "off"
+        /.*Reading.*/: "on 80% soft"

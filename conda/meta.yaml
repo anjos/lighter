@@ -29,7 +29,7 @@ requirements:
     - requests
     - pyyaml >=5.1
     - python-dateutil
-    - websocket-client
+    - tqdm
 
 test:
   imports:

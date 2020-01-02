@@ -11,7 +11,7 @@ dependencies:
 - requests
 - pyyaml >=5.1
 - python-dateutil
-- websocket-client
+- tqdm
 - nose
 - sphinx
 - coverage

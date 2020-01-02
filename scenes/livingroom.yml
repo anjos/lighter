@@ -1,0 +1,17 @@
+Living room:
+    TV:
+        /.*/: "off"
+        /.*Reading Door.*/: "on 5% warm"
+    Relax:
+        /.*/: "off"
+        /.*Photo Frame.*/: "on"
+        /.*Reading.*/: "on 70% soft"
+    Dinner:
+        /.*/: "off"
+        /.*Dining.*/: "on 100% natural"
+        /.*Photo Frame.*/: "on"
+        /.*Reading.*/: "on 90% natural"
+        /.*Corridor.*/: "on 90% natural"
+    Bright:
+        /.*/: "on 100% natural"
+        /.*Photo Frame.*/: "on"

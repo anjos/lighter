@@ -5,14 +5,15 @@
 
 import os
 import re
+import sys
 import ssl
 import json
 import time
+import select
 import requests
 import itertools
 import datetime
 import threading
-
 
 import logging
 
@@ -77,6 +78,48 @@ def _uniq(seq, idfun=None):
     return result
 
 
+class _Getch:
+    """Gets a single character from standard input.
+
+    Does not echo to the screen.
+    """
+    def __init__(self):
+        try:
+            self.impl = _GetchWindows()
+        except ImportError:
+            self.impl = _GetchUnix()
+
+    def __call__(self): return self.impl()
+
+
+class _GetchUnix:
+    def __init__(self):
+        import tty, sys
+
+    def __call__(self):
+        import sys, tty, termios
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+
+
+class _GetchWindows:
+    def __init__(self):
+        import msvcrt
+
+    def __call__(self):
+        import msvcrt
+        return msvcrt.getch()
+
+
+_getch = _Getch()
+
+
 def setup_server():
     """Sets up a connection to a deconz ReST API server"""
 
@@ -91,7 +134,7 @@ def setup_server():
         port=config["port"],
         api_key=config.get("api_key"),
         transitiontime=config.get("transitiontime", 0),
-        timeout=config.get("timeout", 10),
+        timeout=config.get("timeout", 5),
     )
 
 
@@ -115,12 +158,12 @@ class Server:
         Transition time in 1/10 seconds between two (light) states.
 
     timeout : int, float
-        Timeout in seconds or fractions of to wait for light change operations.
-        If set to ``None``, then wait forever.
+        Time int seconds or fractions to wait for lights to reach a particular
+        state before issuing the next command (e.g. storing a scene)
 
     """
 
-    def __init__(self, host, port, api_key=None, transitiontime=0, timeout=10):
+    def __init__(self, host, port, api_key=None, transitiontime=0, timeout=5):
         self.host = host
         self.port = port
         self.api_key = api_key
@@ -129,71 +172,13 @@ class Server:
 
         # to cache server information
         self.cache = dict()
-        self._hook_socket()
 
-    def _hook_socket(self):
-        """Hooks a websocket to allow waiting for actions to take place"""
+    def wait_user_or_timeout(self, timeout=None):
+        """Waits for the user to push a key, or a timeout
 
-        _ws_waiting = dict(lights={}, groups={})
-        _ws_lock = threading.RLock()  # allows multiple messages to be recv
-        _ws_can_terminate = threading.Event()
-        _ws_can_terminate.set()  # by default, we can terminate
-
-        def _on_message(socket, message):
-            """Processes a message from the socket"""
-            with _ws_lock:
-                message = json.loads(message)
-                if message["e"] == "changed":
-                    if message["r"] in _ws_waiting:
-                        if message["id"] in _ws_waiting[message["r"]]:
-                            logger.debug(
-                                "Detected change in /%s/%s: %s",
-                                message["r"],
-                                message["id"],
-                                message["state"],
-                            )
-                            del _ws_waiting[message["r"]][message["id"]]
-                            waiting_on = len(_ws_waiting["lights"]) + len(
-                                _ws_waiting["groups"]
-                            )
-                            logger.debug("Waiting on %d elements", waiting_on)
-                            if waiting_on == 0:
-                                logger.debug("OK to terminate")
-                                _ws_can_terminate.set()
-
-        self._ws_waiting = _ws_waiting
-        self._ws_lock = _ws_lock
-        self._ws_can_terminate = _ws_can_terminate
-
-        config = self.get_config()
-        assert config["config"]["websocketnotifyall"]
-
-        import websocket
-
-        websocket.enableTrace(True)
-        server = (
-            "ws://"
-            + config["config"]["ipaddress"]
-            + ":"
-            + str(config["config"]["websocketport"])
-        )
-        self.ws = websocket.WebSocketApp(server, on_message=_on_message)
-
-        self._ws_thread = threading.Thread(
-            target=self.ws.run_forever,
-            kwargs=dict(
-                sslopt={"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
-            ),
-        )
-        self._ws_thread.daemon = True
-        self._ws_thread.start()
-
-    def wait_for_changes(self, timeout=None):
-        """Waits until all changes have been performed
-
-        This method works as a synchronization point to ensure that state
-        changes have been perceived by the devices connected to the network.
-        It will unblock when changes are done (reported by the websocket).
+        This method waits for the user to push a key, and returns, or returns
+        after a specified number of seconds or, if that is set to ``None``, to
+        the value specified in ``self.timeout``.
 
 
         Parameters
@@ -202,9 +187,33 @@ class Server:
         timeout : :obj:`int`, optional
             Number of seconds to wait for, at most.  If set, overrides the
             internal default
+
         """
-        logger.debug("Waiting for terminate OK")
-        self._ws_can_terminate.wait(timeout=(timeout or self.timeout))
+
+        import tty
+        import tqdm
+        import termios
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        timeout = timeout or self.timeout
+        samples_per_second = 4
+        wait_time = 1.0/samples_per_second
+
+        try:
+            tty.setraw(sys.stdin.fileno())
+            with tqdm.tqdm(total=timeout, desc="Press any key to continue",
+                    bar_format="{desc}: {elapsed_s:2.2f}s|{bar}|%2.2fs" % \
+                    (timeout,)) as pbar:
+                for k in range(timeout*samples_per_second):
+                    i, o, e = select.select([sys.stdin], [], [], wait_time)
+                    if i:
+                        text = sys.stdin.read(1)
+                        logger.debug('Key typed (%s), stop waiting...', text)
+                        break
+                    pbar.update(wait_time)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     def _cache_config(self):
         """Reloads the configuration information from the server, if needs be
@@ -334,8 +343,17 @@ class Server:
             logger.error(
                 "Returned %d (%s)", response.status_code, response.reason
             )
-        data = response.json()
-        logger.debug("Response:\n%s", json.dumps(data, indent=2))
+        details = response.json()
+        for entry in details:
+            if "error" in entry:
+                if entry["error"]["type"] == 901 and retry > 0:
+                    logger.warning("Server got BUSY calling POST '%s' - " \
+                            "retrying (left: %d)", "/".join(parts), retry)
+                    time.sleep(0.2)
+                    return self._post(parts, data, retry-1)
+                logger.error("Call to POST '%s' data: %s returned:\n%s", url,
+                        data, json.dumps(entry, indent=2))
+        logger.debug("Response:\n%s", json.dumps(details, indent=2))
 
     def _get(self, parts, etag=None):
         """GET an API request
@@ -371,7 +389,7 @@ class Server:
             )
         return response
 
-    def _put(self, parts, data):
+    def _put(self, parts, data, retry=3):
         """PUT an API request
 
         Parameters
@@ -387,18 +405,28 @@ class Server:
         """
 
         url = self._api(parts)
-        data = json.dumps(data)
-        logger.debug("PUT '%s' data: %s", url, data)
-        response = requests.put(url, data=data)
+        serial_data = json.dumps(data)
+        logger.debug("PUT '%s' data: %s", url, serial_data)
+        response = requests.put(url, data=serial_data)
         if not response.ok:
-            logger.error("Unable to PUT '%s' data: %s", url, data)
+            logger.error("Unable to PUT '%s' data: %s", url, serial_data)
             logger.error(
                 "Returned %d (%s)", response.status_code, response.reason
             )
-        data = response.json()
-        logger.debug("Response:\n%s", json.dumps(data, indent=2))
+        #analyze response as well
+        details = response.json()
+        for entry in details:
+            if "error" in entry:
+                if entry["error"]["type"] == 901 and retry > 0:
+                    logger.warning("Server got BUSY calling PUT '%s' - " \
+                            "retrying (left: %d)", "/".join(parts), retry)
+                    time.sleep(0.2)
+                    return self._put(parts, data, retry-1)
+                logger.error("Call to PUT '%s' data: %s returned:\n%s", url,
+                        serial_data, json.dumps(entry, indent=2))
+        logger.debug("Response:\n%s", json.dumps(details, indent=2))
 
-    def _delete(self, parts):
+    def _delete(self, parts, retry=3):
         """DELETE an API request
 
         Parameters
@@ -418,9 +446,19 @@ class Server:
                 "Returned %d (%s)", response.status_code, response.reason
             )
         data = response.json()
+        for entry in data:
+            if "error" in entry:
+                if entry["error"]["type"] == 901 and retry > 0:
+                    logger.warning("Server got BUSY calling DELETE '%s' - " \
+                            "retrying (left: %d)", "/".join(parts), retry)
+                    time.sleep(0.2)
+                    return self._delete(parts, retry-1)
+                logger.error("Call to DELETE '%s' returned:\n%s", url,
+                        json.dumps(entry, indent=2))
         logger.debug("Response:\n%s", json.dumps(data, indent=2))
 
-    def _translate_light_state(self, state, ct_bounds, values):
+    def _translate_light_state(self, state, ct_bounds, manufacturer, model_id,
+            values):
         """Translates light state from a string with rough details
 
         Parameters
@@ -433,6 +471,12 @@ class Server:
             A list of exactly two integers indicating the minimum and maximum
             color temperatures the light accepts.  Not all lights accept the
             same range.
+
+        manufacturer, model_id : str
+            Strings (lowercase) corresponding to the manufacturer name and
+            model identifier for the light.  If manufacturer is ``philips``,
+            then we apply a different color gamut correction for lights in XY
+            mode, depending on the model.
 
         values : :obj:`list` of :obj:`str`
             A list of strings containing the "human-readable" values to set to
@@ -491,10 +535,10 @@ class Server:
             """Converts to HS from Kelvins"""
             return color.color_temperature_to_hs(kelvin)
 
-        def _xy(kelvin):
+        def _xy(kelvin, gamut):
             """Converts to XY from Kelvins"""
             h, s = _hs(kelvin)
-            return color.color_hs_to_xy(h, s)
+            return color.color_hs_to_xy(h, s, gamut)
 
         # consumes keywords one by one, and set internal elements
         retval = {"transitiontime": self.transitiontime}
@@ -504,6 +548,7 @@ class Server:
 
             if key in ["off", "0", "0%"]:
                 retval["on"] = False
+                retval["bri"] = _bri(0)
 
             elif key in ["on"]:
                 retval["on"] = True
@@ -556,8 +601,11 @@ class Server:
                 retval["hue"] = h
                 retval["sat"] = s
             elif state["colormode"] == "xy":
-                x, y = _xy(temp)
-                retval["xy"] = [x, y]
+                #TODO: color calibration for xy setting does not seem to work?
+                #gamut = color.get_gamut(manufacturer, model_id)
+                #x, y = _xy(temp, gamut)
+                #retval["xy"] = [x, y]
+                retval["ct"] = _ct(temp)
             else:  # mired color temperature
                 retval["ct"] = _ct(temp)
 
@@ -679,9 +727,6 @@ class Server:
 
         """
         parts = [self.api_key, "lights", str(id), "state"]
-        with self._ws_lock:
-            self._ws_waiting["lights"][id] = data
-            self._ws_can_terminate.clear()
         self._put(parts, data=data)
 
     def _get_light_state_dict(self, d, values):
@@ -711,7 +756,8 @@ class Server:
         state = dict()
         for k, v in d.items():
             state[k] = self._translate_light_state(
-                v["state"], (v.get("ctmin", 250), v.get("ctmax", 454)), values
+                v["state"], (v.get("ctmin", 250), v.get("ctmax", 454)),
+                v["manufacturername"], v["modelid"], values
             )
         return state
 
@@ -737,6 +783,7 @@ class Server:
         """
 
         for k, v in self._get_light_state_dict(d, values).items():
+            logger.info("Set light '%s' to '%s'", d[k]["name"], " ".join(values))
             self._set_single_light(k, v)
 
     def set_light_state(self, id, values):
@@ -925,7 +972,8 @@ class Server:
         # most restrictive lights (IKEA bulbs)
         for k, v in affected.items():
             parts = [self.api_key, "groups", str(k), "action"]
-            data = self._translate_light_state(v["action"], (250, 454), values)
+            data = self._translate_light_state(v["action"], (250, 454),
+                    "generic", "nomodel", values)
             self._put(parts, data=data)
 
     def _select_lights_by_integer_id(self, ids):
@@ -1051,14 +1099,6 @@ class Server:
         for k, v in config.items():
             k = _handle_id(k)
             self._set_group_light_state(id, k, v.split())
-            if not self.wait_for_changes():
-                logger.error(
-                    "Timed-out while waiting for light changes (%s -> %s)", k, v
-                )
-            else:
-                logger.info(
-                    "Server acknowledged light state change (%s -> %s)", k, v
-                )
 
     def store_scene(self, id, scene):
         """Stores the given scene
@@ -1217,10 +1257,6 @@ class Server:
                         del state["xy"]
             state["transitiontime"] = self.transitiontime
             self._set_single_light(k, state)
-        if not self.wait_for_changes():
-            logger.error("Timed-out while waiting for light changes")
-        else:
-            logger.info("Server acknowledged light state change")
 
     def get_scenes(self, group, id=None):
         """Returns one or more scenes from a given group

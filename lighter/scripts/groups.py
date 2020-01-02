@@ -254,7 +254,6 @@ def state(id, values):
 
     server = setup_server()
     server.set_group_state(id, values)
-    import ipdb; ipdb.set_trace()
     pass
 
 

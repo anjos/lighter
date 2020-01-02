@@ -1,18 +1,16 @@
 #!/usr/bin/env python
 # vim: set fileencoding=utf-8 :
 # Andre Anjos <andre.anjos@idiap.ch>
-# Fri Nov 22 15:52:11 CET 2019
+# 2019-12-30 11:54
 
 # Original source:
 # https://raw.githubusercontent.com/home-assistant/home-assistant/master/homeassistant/util/color.py
 
-
 """Color util methods."""
-
-import math
 import colorsys
+import math
+from typing import List, Optional, Tuple
 
-from typing import Tuple, List, Optional
 import attr
 
 # Official CSS3 colors from w3.org:
@@ -117,7 +115,7 @@ COLORS = {
     "mediumslateblue": (123, 104, 238),
     "mediumspringgreen": (0, 250, 154),
     "mediumturquoise": (72, 209, 204),
-    "mediumvioletredred": (199, 21, 133),
+    "mediumvioletred": (199, 21, 133),
     "midnightblue": (25, 25, 112),
     "mintcream": (245, 255, 250),
     "mistyrose": (255, 228, 225),
@@ -189,6 +187,53 @@ class GamutType:
     red = attr.ib(type=XYPoint)
     green = attr.ib(type=XYPoint)
     blue = attr.ib(type=XYPoint)
+
+
+# LivingColors Iris, Bloom, Aura, LightStrips
+Philips_GamutA = GamutType(
+    XYPoint(0.704, 0.296),
+    XYPoint(0.2151, 0.7106),
+    XYPoint(0.138, 0.08),
+)
+
+# Hue A19 bulbs
+Philips_GamutB = GamutType(
+    XYPoint(0.675, 0.322),
+    XYPoint(0.4091, 0.518),
+    XYPoint(0.167, 0.04),
+)
+
+# Hue BR30, A19 (Gen 3), Hue Go, LightStrips plus
+Philips_GamutC = GamutType(
+    XYPoint(0.692, 0.308),
+    XYPoint(0.17, 0.7),
+    XYPoint(0.153, 0.048),
+)
+
+
+def get_philips_light_gamut(model_id):
+    """Gets the correct color gamut for the provided model id.
+    Docs: http://www.developers.meethue.com/documentation/supported-lights
+    """
+    if model_id in ('LST001', 'LLC010', 'LLC011', 'LLC012', 'LLC006', 'LLC007',
+            'LLC013'):
+        return Philips_GamutA
+    elif model_id in ('LCT001', 'LCT007', 'LCT002', 'LCT003', 'LLM001'):
+        return Philips_GamutB
+    elif model_id in ('LCT010', 'LCT014', 'LCT011', 'LLC020', 'LST002'):
+        return Philips_GamutC
+    else:
+        raise ValueError
+    return None
+
+
+def get_gamut(manufacturer, model_id):
+    """Returns the right gamut correction depending on make and model id"""
+
+    if manufacturer.lower() == "philips":
+        return get_philips_light_gamut(model_id)
+    else:
+        return None
 
 
 def color_name_to_rgb(color_name: str) -> Tuple[int, int, int]:
@@ -352,9 +397,7 @@ def color_hsb_to_RGB(fH: float, fS: float, fB: float) -> Tuple[int, int, int]:
     return (r, g, b)
 
 
-def color_RGB_to_hsv(
-    iR: float, iG: float, iB: float
-) -> Tuple[float, float, float]:
+def color_RGB_to_hsv(iR: float, iG: float, iB: float) -> Tuple[float, float, float]:
     """Convert an rgb color to its hsv representation.
 
     Hue is scaled 0-360
@@ -362,11 +405,7 @@ def color_RGB_to_hsv(
     Val is scaled 0-100
     """
     fHSV = colorsys.rgb_to_hsv(iR / 255.0, iG / 255.0, iB / 255.0)
-    return (
-        round(fHSV[0] * 360, 3),
-        round(fHSV[1] * 100, 3),
-        round(fHSV[2] * 100, 3),
-    )
+    return round(fHSV[0] * 360, 3), round(fHSV[1] * 100, 3), round(fHSV[2] * 100, 3)
 
 
 def color_RGB_to_hs(iR: float, iG: float, iB: float) -> Tuple[float, float]:
@@ -451,9 +490,7 @@ def rgb_hex_to_rgb_list(hex_string: str) -> List[int]:
     ]
 
 
-def color_temperature_to_hs(
-    color_temperature_kelvin: float
-) -> Tuple[float, float]:
+def color_temperature_to_hs(color_temperature_kelvin: float) -> Tuple[float, float]:
     """Return an hs color from a color temperature in Kelvin."""
     return color_RGB_to_hs(*color_temperature_to_rgb(color_temperature_kelvin))
 
@@ -484,9 +521,7 @@ def color_temperature_to_rgb(
     return red, green, blue
 
 
-def _bound(
-    color_component: float, minimum: float = 0, maximum: float = 255
-) -> float:
+def _bound(color_component: float, minimum: float = 0, maximum: float = 255) -> float:
     """
     Bound the given color component value between the given min and max values.
 
@@ -609,9 +644,7 @@ def get_closest_point_to_point(
     return (cx, cy)
 
 
-def check_point_in_lamps_reach(
-    p: Tuple[float, float], Gamut: GamutType
-) -> bool:
+def check_point_in_lamps_reach(p: Tuple[float, float], Gamut: GamutType) -> bool:
     """Check if the provided XYPoint can be recreated by a Hue lamp."""
     v1 = XYPoint(Gamut.green.x - Gamut.red.x, Gamut.green.y - Gamut.red.y)
     v2 = XYPoint(Gamut.blue.x - Gamut.red.x, Gamut.blue.y - Gamut.red.y)
@@ -632,10 +665,7 @@ def check_valid_gamut(Gamut: GamutType) -> bool:
 
     # Check if all six coordinates of the gamut lie between 0 and 1.
     red_valid = (
-        Gamut.red.x >= 0
-        and Gamut.red.x <= 1
-        and Gamut.red.y >= 0
-        and Gamut.red.y <= 1
+        Gamut.red.x >= 0 and Gamut.red.x <= 1 and Gamut.red.y >= 0 and Gamut.red.y <= 1
     )
     green_valid = (
         Gamut.green.x >= 0
