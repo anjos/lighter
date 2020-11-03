@@ -1,6 +1,11 @@
 Kitchen:
     Cozy:
         /.*/: "off"
+        /.*Counter.*/: "off"
+        /.*Bar.*/: "on 40% soft"
+    Night:
+        /.*/: "off"
         /.*Counter.*/: "on"
+        /.*Bar.*/: "on 80% natural"
     Bright:
         /.*/: "on 100% natural"

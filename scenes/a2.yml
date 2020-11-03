@@ -5,3 +5,5 @@ A2:
     Reading:
         /.*/: "off"
         /.*Reading.*/: "on 80% soft"
+    Bright:
+        /.*/: "on 100% natural"
