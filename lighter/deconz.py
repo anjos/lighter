@@ -555,7 +555,6 @@ class Server:
 
             if key in ["off", "0", "0%"]:
                 retval["on"] = False
-                retval["bri"] = _bri(0)
 
             elif key in ["on"]:
                 retval["on"] = True
