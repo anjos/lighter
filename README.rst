@@ -29,7 +29,27 @@ Once the environment is installed, activate it to be able to call binaries::
 Usage
 -----
 
-There is a single program that you can launch::
+To use the program, you must configure the ``.lighter.json`` file, with the
+information from the deCONZ server you want to affect::
+
+  {
+    "host": "phoscon.local",
+    "port": 80,
+    "api_key": "DEADBEEF22",
+    "transitiontime": 0,
+    "timeout": 10,
+    "retrydelay": 1.0
+  }
+
+To obtain the API key for your application, go to the server, and in the
+Gateway settings, click in "Advanced", then "Authenticate app".  Within 60
+seconds, issue the following command::
+
+  $ curl -X POST -d '{"devicetype":"lighter"}' "http://phoscon.local/api/"
+
+This should provide you with an API key you must copy to the ``.lighter.json``
+configuration file.   Once that is ready, there is a single program that you
+can launch::
 
   $ ./bin/lighter --help
 
