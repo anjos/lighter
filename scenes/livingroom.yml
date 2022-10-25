@@ -4,14 +4,18 @@ Living room:
         /.*Reading Door.*/: "on 5% warm"
     Relax:
         /.*/: "off"
-        /.*Photo Frame.*/: "on"
+        /.*Piano lights.*/: "on"
+        /.*Photo frame.*/: "on"
+        /.*Xmas.*/: "on"
         /.*Reading.*/: "on 70% soft"
     Dinner:
         /.*/: "off"
         /.*Dining.*/: "on 100% natural"
-        /.*Photo Frame.*/: "on"
+        /.*Piano lights.*/: "on"
+        /.*Photo frame.*/: "on"
+        /.*Xmas.*/: "on"
         /.*Reading.*/: "on 100% natural"
         /.*Corridor.*/: "on 100% natural"
     Bright:
         /.*/: "on 100% natural"
-        /.*Photo Frame.*/: "on"
+        /.*Photo frame.*/: "on"

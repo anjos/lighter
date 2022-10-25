@@ -2,7 +2,9 @@ Everything:
     Arriving:
         /.*/: "off"
         /.*Reading.*/: "on 90% soft"
-        /.*Photo Frame.*/: "on"
+        /.*Piano lights.*/: "on"
+        /.*Photo frame.*/: "on"
+        /.*Xmas Tree.*/: "on"
         /^Kitchen Ceiling.*/: "off"
         /^Kitchen Light bar.*/: "on 90% natural"
         /^Kitchen Counter.*/: "on"
