@@ -1,4 +1,4 @@
-.. image:: https://travis-ci.org/anjos/lighter.svg?branch=master
+.. image:: https://travis-ci.org/anjos/lighter.svg?branch=main
    :target: https://travis-ci.org/anjos/lighter
 .. image:: https://img.shields.io/docker/pulls/anjos/lighter.svg
    :target: https://hub.docker.com/r/anjos/lighter/
